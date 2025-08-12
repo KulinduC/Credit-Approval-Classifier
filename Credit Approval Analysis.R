@@ -124,6 +124,8 @@ confMatLabel <- function(fit, newdata = test_data, truth = test_y) {
 p <- ncol(train_data_rf) - 1
 print(p)
 
+
+# RANDOM FOREST
 rf.full <- randomForest(factor(Approved) ~ ., data = train_data,
                         ntree = 500, importance = TRUE)
 
@@ -145,7 +147,7 @@ chisq.test(table(train_data$DriversLicense, train_data$Approved))
 # Create the formula
 significant <- Approved ~ CreditScore + YearsEmployed + Income + Debt + Age + PriorDefault + Employed + DriversLicense
 
-#Convert target to factor in the data
+
 train_data_rf <- train_data
 test_data_rf <- test_data
 
@@ -248,26 +250,34 @@ confMatLabel(fit.pls.all, newdata = test_data_rf, truth = test_data_rf$Approved)
 
 
 # LDA
-# Non zero Significant features 
+# Non zero significant features 
 significant_nonzero <- Approved ~ CreditScore + YearsEmployed + Income + Debt + Age
 
 fit.lda.sig <- lda(significant_nonzero, data = train_data_rf)
-confMatLabel(fit.lda.sig, newdata = test_data_rf, truth = test_data_rf$Approved)
+lda_pred <- predict(fit.lda.sig, newdata = test_data_rf)$class
+mean(lda_pred == test_data_rf$Approved) * 100
 
 # QDA
-# Significant features
+# Non zero significant features 
 fit.qda.sig <- qda(significant_nonzero, data = train_data_rf)
-confMatLabel(fit.qda.sig, newdata = test_data_rf, truth = test_data_rf$Approved)
-
-
-
+qda_pred <- predict(fit.qda.sig, newdata = test_data_rf)$class
+mean(qda_pred == test_data_rf$Approved) * 100
 
 
 # Splines
 # Significant features
+fit.spline.sig <- glm(Approved ~ ns(CreditScore, df=4) + ns(YearsEmployed, df=4) + 
+                        ns(Income, df=4) + ns(Debt, df=4) + ns(Age, df=4) + 
+                        PriorDefault + Employed + DriversLicense, 
+                      data = train_data, family = binomial())
+confMat(fit.spline.sig)
 
-
-# All features
+# All features - reusing existing variables
+fit.spline.all <- glm(Approved ~ ns(Age, df=4) + ns(Debt, df=4) + 
+                        ns(YearsEmployed, df=4) + ns(CreditScore, df=4) + 
+                        ns(Income, df=4) + ., 
+                      data = train_data, family = binomial())
+confMat(fit.spline.all)
 
 
 
