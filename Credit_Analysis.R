@@ -302,7 +302,7 @@ pred.lasso.sig <- as.numeric(predict(fit.lasso.sig, test_sig, s = "lambda.min", 
 mean((pred.lasso.sig > 0.5) == test_y_num) * 100
 
 # All features
-fit.lasso.all  <- cv.glmnet(train_all, train_y_num, alpha = 1, family = "binomial")
+fit.lasso.all  <- cv.glmnet(train_all, train_y_num, alpha = 1, family = "binomial")a
 pred.lasso.all <- as.numeric(predict(fit.lasso.all, test_all, s = "lambda.min", type = "response"))
 mean((pred.lasso.all > 0.5) == test_y_num) * 100
 
@@ -364,5 +364,3 @@ pr("Lasso (significant)",
    mean((as.numeric(predict(fit.lasso.sig, test_sig,  s="lambda.min", type="response")) > 0.5) == (as.numeric(test_y)-1)) * 100)
 pr("Lasso (all)",
    mean((as.numeric(predict(fit.lasso.all, test_all, s="lambda.min", type="response")) > 0.5) == (as.numeric(test_y)-1)) * 100)
-
-

@@ -1,0 +1,254 @@
+# Python version of your R pipeline
+# Tech stack: pandas, NumPy, scikit-learn, (Matplotlib not needed for this printout)
+
+import numpy as np
+import pandas as pd
+
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, SplineTransformer
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import make_pipeline
+from sklearn.metrics import accuracy_score
+
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.linear_model import LogisticRegressionCV
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.cross_decomposition import PLSRegression
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
+from sklearn.discriminant_analysis import QuadraticDiscriminantAnalysis as QDA
+
+# -----------------------
+# Load & name the columns
+# -----------------------
+cols = ["Gender","Age","Debt","MaritalStatus","BankCustomer","EducationLevel",
+        "Ethnicity","YearsEmployed","PriorDefault","Employed","CreditScore",
+        "DriversLicense","Citizen","ZipCode","Income","Approved"]
+
+df = pd.read_csv("credit+approval/crx.data", header=None, names=cols, na_values=["?"])
+df = df.dropna().copy()
+
+# -----------------------
+# Binary encodings (same mapping as R)
+# -----------------------
+df["Gender"]         = (df["Gender"] == "a").astype(int)
+df["PriorDefault"]   = (df["PriorDefault"] == "t").astype(int)
+df["Employed"]       = (df["Employed"] == "t").astype(int)
+df["DriversLicense"] = (df["DriversLicense"] == "t").astype(int)
+df["Approved"]       = (df["Approved"] == "+").astype(int)
+
+# -----------------------
+# Ensure numeric columns
+# -----------------------
+num_cols = ["Age","Debt","YearsEmployed","CreditScore","Income","ZipCode"]
+for c in num_cols:
+    df[c] = pd.to_numeric(df[c], errors="coerce")
+df = df.dropna().copy()
+
+# -----------------------
+# Zip buckets then drop ZipCode
+# -----------------------
+df["ZipCode1"] = (df["ZipCode"] <= 73).astype(int)
+df["ZipCode2"] = ((df["ZipCode"] > 73) & (df["ZipCode"] <= 160)).astype(int)
+df["ZipCode3"] = ((df["ZipCode"] > 160) & (df["ZipCode"] <= 272)).astype(int)
+df["ZipCode4"] = (df["ZipCode"] > 272).astype(int)
+df = df.drop(columns=["ZipCode"])
+
+# -----------------------
+# One-hot like your manual R encoding
+# -----------------------
+# Citizen g/p
+df["Citizen_g"] = (df["Citizen"] == "g").astype(int)
+df["Citizen_p"] = (df["Citizen"] == "p").astype(int)
+df = df.drop(columns=["Citizen"])
+
+# MaritalStatus u/y/l
+df["MaritalStatus_u"] = (df["MaritalStatus"] == "u").astype(int)
+df["MaritalStatus_y"] = (df["MaritalStatus"] == "y").astype(int)
+df["MaritalStatus_l"] = (df["MaritalStatus"] == "l").astype(int)
+df = df.drop(columns=["MaritalStatus"])
+
+# BankCustomer g/p
+df["BankCustomer_g"] = (df["BankCustomer"] == "g").astype(int)
+df["BankCustomer_p"] = (df["BankCustomer"] == "p").astype(int)
+df = df.drop(columns=["BankCustomer"])
+
+# EducationLevel
+for lv in ["c","d","cc","i","j","k","m","r","q","w","x","e","aa"]:
+    df[f"EducationLevel_{lv}"] = (df["EducationLevel"] == lv).astype(int)
+df = df.drop(columns=["EducationLevel"])
+
+# Ethnicity
+for lv in ["v","h","bb","j","n","z","dd","ff"]:
+    df[f"Ethnicity_{lv}"] = (df["Ethnicity"] == lv).astype(int)
+df = df.drop(columns=["Ethnicity"])
+
+# -----------------------
+# Train/test split (80/20, stratified)
+# -----------------------
+X = df.drop(columns=["Approved"])
+y = df["Approved"].astype(int)
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, stratify=y, random_state=1
+)
+
+# -----------------------
+# Scale ONLY the 5 continuous numeric columns (train stats)
+# -----------------------
+cont_cols = ["Age","Debt","YearsEmployed","CreditScore","Income"]
+
+scaler = StandardScaler().fit(X_train[cont_cols])
+X_train_scaled = X_train.copy()
+X_test_scaled  = X_test.copy()
+X_train_scaled[cont_cols] = scaler.transform(X_train[cont_cols])
+X_test_scaled[cont_cols]  = scaler.transform(X_test[cont_cols])
+
+# -----------------------
+# Significant feature subset (same as R)
+# -----------------------
+sig_vars = ["CreditScore","YearsEmployed","Income","Debt","Age","PriorDefault","Employed","DriversLicense"]
+
+Xtr_sig = X_train_scaled[sig_vars].to_numpy()
+Xte_sig = X_test_scaled[sig_vars].to_numpy()
+
+Xtr_all = X_train_scaled.to_numpy()
+Xte_all = X_test_scaled.to_numpy()
+
+# -----------------------
+# Helpers
+# -----------------------
+def print_acc(label, acc):
+    print(f"{label:<32s} : {acc:6.2f}%")
+
+def acc_from_labels(model, X, y):
+    return accuracy_score(y, model.predict(X)) * 100
+
+def acc_from_scores(scores, y):  # for regression-style outputs
+    return accuracy_score(y, (scores > 0.5).astype(int)) * 100
+
+# -----------------------
+# Baseline (majority class)
+# -----------------------
+base = y_test.value_counts(normalize=True).max() * 100
+print(f"Baseline (majority-class)       : {base:6.2f}%\n")
+
+# -----------------------
+# Models
+# -----------------------
+
+# Random Forest (mtry ~ 3 in R -> max_features=3)
+rf_sig = RandomForestClassifier(n_estimators=500, max_features=3, random_state=1).fit(Xtr_sig, y_train)
+rf_all = RandomForestClassifier(n_estimators=500, max_features=3, random_state=1).fit(Xtr_all, y_train)
+
+# Linear Regression (then 0.5 threshold)
+lm_sig = LinearRegression().fit(Xtr_sig, y_train)
+lm_all = LinearRegression().fit(Xtr_all, y_train)
+
+# Logistic Regression (plain)
+log_sig = LogisticRegression(solver="liblinear", max_iter=1000).fit(Xtr_sig, y_train)
+log_all = LogisticRegression(solver="liblinear", max_iter=1000).fit(Xtr_all, y_train)
+
+# SVMs
+svm_lin_sig = SVC(kernel="linear", C=1).fit(Xtr_sig, y_train)
+svm_lin_all = SVC(kernel="linear", C=1).fit(Xtr_all, y_train)
+
+svm_rbf_sig = SVC(kernel="rbf", C=1, gamma="scale").fit(Xtr_sig, y_train)
+svm_rbf_all = SVC(kernel="rbf", C=1, gamma="scale").fit(Xtr_all, y_train)
+
+# KNN
+knn_sig = KNeighborsClassifier(n_neighbors=5).fit(Xtr_sig, y_train)
+knn_all = KNeighborsClassifier(n_neighbors=5).fit(Xtr_all, y_train)
+
+# PLS (regression, then 0.5 threshold)
+# Keep it simple: 5 components (you can tune if you want)
+ncomp_sig = min(5, Xtr_sig.shape[1])
+ncomp_all = min(5, Xtr_all.shape[1])
+pls_sig = PLSRegression(n_components=ncomp_sig).fit(Xtr_sig, y_train)
+pls_all = PLSRegression(n_components=ncomp_all).fit(Xtr_all, y_train)
+
+# LDA / QDA on non-zero significant numerics (like in R)
+nz_sig = ["CreditScore","YearsEmployed","Income","Debt","Age"]
+Xtr_nz = X_train_scaled[nz_sig].to_numpy()
+Xte_nz = X_test_scaled[nz_sig].to_numpy()
+lda_sig = LDA().fit(Xtr_nz, y_train)
+qda_sig = QDA(reg_param=1e-4).fit(Xtr_nz, y_train)  # small regularization for stability
+
+# Splines (natural-ish cubic via SplineTransformer + Logistic)
+# Significant: splines on the 5 numerics, passthrough binary PriorDefault/Employed/DriversLicense
+spl_num_sig = ["CreditScore","YearsEmployed","Income","Debt","Age"]
+spl_bin_sig = ["PriorDefault","Employed","DriversLicense"]
+sig_other = spl_bin_sig  # just pass these through
+
+ct_sig = ColumnTransformer(
+    transformers=[
+        ("spline", SplineTransformer(degree=3, n_knots=5, extrapolation="linear", include_bias=False), spl_num_sig),
+        ("passthrough", "passthrough", sig_other),
+    ],
+    remainder="drop"
+)
+spl_log_sig = make_pipeline(ct_sig, LogisticRegression(solver="liblinear", max_iter=1000)).fit(
+    X_train_scaled[spl_num_sig + spl_bin_sig], y_train
+)
+
+# All: splines on 5 numerics, passthrough everything else
+all_other_cols = [c for c in X_train_scaled.columns if c not in cont_cols]
+ct_all = ColumnTransformer(
+    transformers=[
+        ("spline", SplineTransformer(degree=3, n_knots=5, extrapolation="linear", include_bias=False), cont_cols),
+        ("passthrough", "passthrough", [c for c in all_other_cols if c != "Approved"]),
+    ],
+    remainder="drop"
+)
+# Fit on full X_train_scaled (all features)
+spl_log_all = make_pipeline(ct_all, LogisticRegression(solver="liblinear", max_iter=1000)).fit(
+    X_train_scaled, y_train
+)
+
+# Ridge / Lasso (logistic); keep it simple with fixed C=1
+ridge_sig = LogisticRegression(penalty="l2", solver="liblinear", max_iter=1000).fit(Xtr_sig, y_train)
+ridge_all = LogisticRegression(penalty="l2", solver="liblinear", max_iter=1000).fit(Xtr_all, y_train)
+
+lasso_sig = LogisticRegression(penalty="l1", solver="saga", max_iter=5000).fit(Xtr_sig, y_train)
+lasso_all = LogisticRegression(penalty="l1", solver="saga", max_iter=5000).fit(Xtr_all, y_train)
+
+# -----------------------
+# Simple collected printout
+# -----------------------
+print("\n=== MODEL ACCURACIES ===")
+# Linear / Logistic / Splines
+print_acc("Linear Reg (significant)",  acc_from_scores(lm_sig.predict(Xte_sig), y_test))
+print_acc("Linear Reg (all)",          acc_from_scores(lm_all.predict(Xte_all), y_test))
+print_acc("Logistic Reg (significant)",acc_from_labels(log_sig, Xte_sig, y_test))
+print_acc("Logistic Reg (all)",        acc_from_labels(log_all, Xte_all, y_test))
+print_acc("Splines (significant)",     acc_from_labels(spl_log_sig, X_test_scaled[spl_num_sig + spl_bin_sig], y_test))
+print_acc("Splines (all)",             acc_from_labels(spl_log_all, X_test_scaled, y_test))
+
+# Random Forest
+print_acc("Random Forest (significant)",acc_from_labels(rf_sig, Xte_sig, y_test))
+print_acc("Random Forest (all)",        acc_from_labels(rf_all, Xte_all, y_test))
+
+# SVM
+print_acc("SVM Linear (significant)",   acc_from_labels(svm_lin_sig, Xte_sig, y_test))
+print_acc("SVM Linear (all)",           acc_from_labels(svm_lin_all, Xte_all, y_test))
+print_acc("SVM RBF (significant)",      acc_from_labels(svm_rbf_sig, Xte_sig, y_test))
+print_acc("SVM RBF (all)",              acc_from_labels(svm_rbf_all, Xte_all, y_test))
+
+# KNN
+print_acc("KNN (significant)",          acc_from_labels(knn_sig, Xte_sig, y_test))
+print_acc("KNN (all)",                  acc_from_labels(knn_all, Xte_all, y_test))
+
+# PLS (thresholded)
+print_acc("PLS (significant)",          acc_from_scores(pls_sig.predict(Xte_sig).ravel(), y_test))
+print_acc("PLS (all)",                  acc_from_scores(pls_all.predict(Xte_all).ravel(), y_test))
+
+# LDA / QDA (nonzero significant numerics)
+print_acc("LDA (significant-nonzero)",  acc_from_labels(lda_sig, Xte_nz, y_test))
+print_acc("QDA (significant-nonzero)",  acc_from_labels(qda_sig, Xte_nz, y_test))
+
+# Ridge / Lasso (logistic)
+print_acc("Ridge (significant)",        acc_from_labels(ridge_sig, Xte_sig, y_test))
+print_acc("Ridge (all)",                acc_from_labels(ridge_all, Xte_all, y_test))
+print_acc("Lasso (significant)",        acc_from_labels(lasso_sig, Xte_sig, y_test))
+print_acc("Lasso (all)",                acc_from_labels(lasso_all, Xte_all, y_test))
