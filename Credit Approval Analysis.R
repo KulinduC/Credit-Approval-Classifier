@@ -2,15 +2,12 @@
 library(readr)
 library(dplyr)
 library(MASS)        # lda, qda
-library(class)       # knn
 library(glmnet)
 library(randomForest)
-library(leaps)       # regsubsets
 library(pls)         # pcr/plsr
 library(splines)
 library(caret)
 library(e1071)       # svm
-library(ROCR)
 set.seed(1)
 
 
@@ -87,7 +84,6 @@ for (lv in c("v","h","bb","j","n","z","dd","ff")) {
 data <- dplyr::select(data, -Ethnicity)
 
 
-
 # split first
 train_idx <- createDataPartition(factor(data$Approved, levels = c(0,1)), p = 0.8, list = FALSE)
 train_data <- data[train_idx, ]
@@ -107,7 +103,6 @@ train_y <- factor(train_data$Approved, levels = c(0,1))
 test_y  <- factor(test_data$Approved,  levels = c(0,1))
 
 
-
 confMat <- function(fit, newdata = test_data, truth = test_y, thr = 0.5) {
   probs <- predict(fit, newdata, type = "response")
   pred  <- factor(as.integer(probs > thr), levels = c(0,1))
@@ -119,11 +114,6 @@ confMatLabel <- function(fit, newdata = test_data, truth = test_y) {
   pred <- factor(as.character(p), levels = c(0,1))
   as.numeric(caret::confusionMatrix(pred, truth)$overall["Accuracy"]) * 100
 }
-
-# Count number of predictors (exclude Approved)
-p <- ncol(train_data_rf) - 1
-print(p)
-
 
 # RANDOM FOREST
 rf.full <- randomForest(factor(Approved) ~ ., data = train_data,
@@ -142,11 +132,19 @@ print(importance_df)
 chisq.test(table(train_data$PriorDefault, train_data$Approved))
 chisq.test(table(train_data$Employed, train_data$Approved))
 chisq.test(table(train_data$DriversLicense, train_data$Approved))
-# P-value < 0.05, statisatically significant, keep the features
+# P-value < 0.05, statistically significant, keep the features
 
 # Create the formula
 significant <- Approved ~ CreditScore + YearsEmployed + Income + Debt + Age + PriorDefault + Employed + DriversLicense
 
+# Significant features
+sig_vars <- c("CreditScore", "YearsEmployed", "Income", "Debt", "Age", "PriorDefault", "Employed", "DriversLicense")
+
+train_sig <- as.matrix(train_data[, sig_vars])
+test_sig <- as.matrix(test_data[, sig_vars])
+
+train_all <- as.matrix(train_data[, setdiff(names(train_data), "Approved")])
+test_all  <- as.matrix(test_data[,  setdiff(names(test_data),  "Approved")])
 
 train_data_rf <- train_data
 test_data_rf <- test_data
@@ -196,7 +194,6 @@ confMatLabel(fit.svm.lin.sig)
 fit.svm.lin.all <- svm(
   Approved ~ .,
   data = train_data_rf,
-  type = "C-classification",
   kernel = "linear",
   scale = FALSE
 )
@@ -273,26 +270,99 @@ fit.spline.sig <- glm(Approved ~ ns(CreditScore, df=4) + ns(YearsEmployed, df=4)
 confMat(fit.spline.sig)
 
 # All features - reusing existing variables
-fit.spline.all <- glm(Approved ~ ns(Age, df=4) + ns(Debt, df=4) + 
-                        ns(YearsEmployed, df=4) + ns(CreditScore, df=4) + 
-                        ns(Income, df=4) + ., 
-                      data = train_data, family = binomial())
+fit.spline.all <- glm(
+  Approved ~ ns(Age,4) + ns(Debt,4) + ns(YearsEmployed,4) + ns(CreditScore,4) + ns(Income,4) +
+    . - Age - Debt - YearsEmployed - CreditScore - Income,
+  data = train_data, family = binomial()
+)
 confMat(fit.spline.all)
 
 
 
-# Ridge
-# Significant features
+# RIDGE
+# Convert factor to numeric for comparison
+test_y_num <- as.numeric(test_y) - 1  # Convert factor levels (1,2) to (0,1)
+train_y_num <- as.numeric(train_y) - 1
 
 
+#Significant features
+fit.ridge.sig  <- cv.glmnet(train_sig, train_y_num, alpha = 0, family = "binomial")
+pred.ridge.sig <- as.numeric(predict(fit.ridge.sig, test_sig, s = "lambda.min", type = "response"))
+mean((pred.ridge.sig > 0.5) == test_y_num) * 100
 
 # All features
+fit.ridge.all  <- cv.glmnet(train_all, train_y_num, alpha = 0, family = "binomial")
+pred.ridge.all <- as.numeric(predict(fit.ridge.all, test_all, s = "lambda.min", type = "response"))
+mean((pred.ridge.all > 0.5) == test_y_num) * 100
 
-
-# Lasso
+# LASSO
 # Significant features
-
+fit.lasso.sig  <- cv.glmnet(train_sig, train_y_num, alpha = 1, family = "binomial")
+pred.lasso.sig <- as.numeric(predict(fit.lasso.sig, test_sig, s = "lambda.min", type = "response"))
+mean((pred.lasso.sig > 0.5) == test_y_num) * 100
 
 # All features
+fit.lasso.all  <- cv.glmnet(train_all, train_y_num, alpha = 1, family = "binomial")
+pred.lasso.all <- as.numeric(predict(fit.lasso.all, test_all, s = "lambda.min", type = "response"))
+mean((pred.lasso.all > 0.5) == test_y_num) * 100
+
+
+# SUMMARY
+# ===== Simple collected printout of accuracies =====
+pr <- function(label, acc) cat(sprintf("%-32s : %6.2f%%\n", label, acc))
+
+cat("\n=== MODEL ACCURACIES ===\n")
+
+# Linear / Logistic / Splines
+pr("Linear Reg (significant)",  confMat(fit.lm.sig))
+pr("Linear Reg (all)",          confMat(fit.lm.all))
+pr("Logistic Reg (significant)",confMat(fit.glm.sig))
+pr("Logistic Reg (all)",        confMat(fit.glm.all))
+pr("Splines (significant)",     confMat(fit.spline.sig))
+pr("Splines (all)",             confMat(fit.spline.all))
+
+# Random Forest
+pr("Random Forest (significant)",
+   confMatLabel(fit.rf,     newdata=test_data_rf, truth=test_data_rf$Approved))
+pr("Random Forest (all)",
+   confMatLabel(fit.rf.all, newdata=test_data_rf, truth=test_data_rf$Approved))
+
+# SVM
+pr("SVM Linear (significant)",
+   confMatLabel(fit.svm.lin.sig, newdata=test_data_rf, truth=test_data_rf$Approved))
+pr("SVM Linear (all)",
+   confMatLabel(fit.svm.lin.all, newdata=test_data_rf, truth=test_data_rf$Approved))
+pr("SVM RBF (significant)",
+   confMatLabel(fit.svm.rbf.sig, newdata=test_data_rf, truth=test_data_rf$Approved))
+pr("SVM RBF (all)",
+   confMatLabel(fit.svm.rbf.all, newdata=test_data_rf, truth=test_data_rf$Approved))
+
+# KNN
+pr("KNN (significant)",
+   confMatLabel(fit.knn.sig, newdata=test_data_rf, truth=test_data_rf$Approved))
+pr("KNN (all)",
+   confMatLabel(fit.knn.all, newdata=test_data_rf, truth=test_data_rf$Approved))
+
+# PLS
+pr("PLS (significant)",
+   confMatLabel(fit.pls.sig, newdata=test_data_rf, truth=test_data_rf$Approved))
+pr("PLS (all)",
+   confMatLabel(fit.pls.all, newdata=test_data_rf, truth=test_data_rf$Approved))
+
+# LDA / QDA (nonzero significant set)
+pr("LDA (significant-nonzero)",
+   mean(predict(fit.lda.sig, newdata=test_data_rf)$class == test_data_rf$Approved) * 100)
+pr("QDA (significant-nonzero)",
+   mean(predict(fit.qda.sig, newdata=test_data_rf)$class == test_data_rf$Approved) * 100)
+
+# Ridge / Lasso (glmnet)
+pr("Ridge (significant)",
+   mean((as.numeric(predict(fit.ridge.sig, test_sig,  s="lambda.min", type="response")) > 0.5) == (as.numeric(test_y)-1)) * 100)
+pr("Ridge (all)",
+   mean((as.numeric(predict(fit.ridge.all, test_all, s="lambda.min", type="response")) > 0.5) == (as.numeric(test_y)-1)) * 100)
+pr("Lasso (significant)",
+   mean((as.numeric(predict(fit.lasso.sig, test_sig,  s="lambda.min", type="response")) > 0.5) == (as.numeric(test_y)-1)) * 100)
+pr("Lasso (all)",
+   mean((as.numeric(predict(fit.lasso.all, test_all, s="lambda.min", type="response")) > 0.5) == (as.numeric(test_y)-1)) * 100)
 
 
