@@ -23,7 +23,7 @@ cols = ["Gender","Age","Debt","MaritalStatus","BankCustomer","EducationLevel",
 df = pd.read_csv("credit+approval/crx.data", header=None, names=cols, na_values=["?"])
 df = df.dropna().copy()
 
-# Binary encodings (same mapping as R)
+# Binary encodings
 df["Gender"]         = (df["Gender"] == "a").astype(int)
 df["PriorDefault"]   = (df["PriorDefault"] == "t").astype(int)
 df["Employed"]       = (df["Employed"] == "t").astype(int)
@@ -116,46 +116,92 @@ print(f"Baseline (majority-class)       : {base:6.2f}%\n")
 # MODELS
 
 # Random Forest (mtry ~ 3 in R -> max_features=3)
+# Forest will have 500 trees and each split in a tree, only 3 features are considered
 rf_sig = RandomForestClassifier(n_estimators=500, max_features=3, random_state=1).fit(train_sig, train_labels)
 rf_all = RandomForestClassifier(n_estimators=500, max_features=3, random_state=1).fit(train_all, train_labels)
 
 # Linear Regression (then 0.5 threshold)
+# straight line or hyperplane in higher dimensions to minimize squared error between predicition and actual values
 lm_sig = LinearRegression().fit(train_sig, train_labels)
 lm_all = LinearRegression().fit(train_all, train_labels)
 
 # Logistic Regression (plain)
+# Takes input features and makes a linear combination: z = beta_0 + beta_1 * x_1 + beta_2 * x_2...
+# Passes z to a sigmoid function and squashes any number into a probability between 0 and 1
+# p >= 0.5 -> class 1 (yes) else class 0 (no)
 log_sig = LogisticRegression(solver="liblinear", max_iter=1000).fit(train_sig, train_labels)
 log_all = LogisticRegression(solver="liblinear", max_iter=1000).fit(train_all, train_labels)
 
 # SVMs
+
+# boundary is a straight line and C controls how strict the margin is
+# Large C -> small margin so fewer misclassification
+# Small C -> large margin, allows more misclassification (overfitting)
 svm_lin_sig = SVC(kernel="linear", C=1).fit(train_sig, train_labels)
 svm_lin_all = SVC(kernel="linear", C=1).fit(train_all, train_labels)
 
+# rbf is radial basis function (Gaussian Kernel)
+# maps data into higher dimensions so classes that aren't linearly separable become separable
+# gamma defines how far the influence of a single training example reaches
+# low values means influence extends far and high values meaning the influence is limited to points very close to the training example
 svm_rbf_sig = SVC(kernel="rbf", C=1, gamma="scale").fit(train_sig, train_labels)
 svm_rbf_all = SVC(kernel="rbf", C=1, gamma="scale").fit(train_all, train_labels)
 
 # KNN
+# For each prediction look at 5 closest neighbors, take majority vote of their labels, assign the new point to that class
 knn_sig = KNeighborsClassifier(n_neighbors=5).fit(train_sig, train_labels)
 knn_all = KNeighborsClassifier(n_neighbors=5).fit(train_all, train_labels)
 
-# PLS (regression, then 0.5 threshold)
+# PLS (regression, then 0.5 threshold) combines aspects of PCA
+# Sometimes features are many and highly correlated (multicolinearlity)
+# PLS creates new components (linear combinations of the original features)
+# Instead of regressing on all raw features, regress on a small number of latent components
+# It works well with many correlated predictors
+
+# number of latent components to use
 ncomp_sig = min(5, train_sig.shape[1])
 ncomp_all = min(5, train_all.shape[1])
 pls_sig = PLSRegression(n_components=ncomp_sig).fit(train_sig, train_labels)
 pls_all = PLSRegression(n_components=ncomp_all).fit(train_all, train_labels)
 
 # LDA / QDA on non-zero significant numerics
+
 nonZero_sig = ["CreditScore","YearsEmployed","Income","Debt","Age"]
 train_nz = train_features_scaled[nonZero_sig].to_numpy()
 test_nz = test_features_scaled[nonZero_sig].to_numpy()
-lda_sig = LDA().fit(train_nz, train_labels)
-qda_sig = QDA(reg_param=1e-4).fit(train_nz, train_labels)  # small regularization for stability
 
-# Splines (natural-ish cubic via SplineTransformer + Logistic)
-# Significant: splines on the 5 numerics, passthrough binary PriorDefault/Employed/DriversLicense
+# decision boundary is linear (line, plane or hyperplane)
+# will find the linear combination of features that best separates the classes
+lda_sig = LDA().fit(train_nz, train_labels)
+# decision boundary is quadratic
+# can overfit if data is small or noisy
+# reg_param is a small regularization term to stabilize covariance estimates
+qda_sig = QDA(reg_param=1e-4).fit(train_nz, train_labels)
+
+
+# Ridge / Lasso (logistic);
+# Squares of coefficients are penalized
+
+# Coefficients get shrunk toward zero but rarely become exactly zero
+# Keeps all features, but reduces their impact if they're not useful
+ridge_sig = LogisticRegression(penalty="l2", solver="liblinear", max_iter=1000).fit(train_sig, train_labels)
+ridge_all = LogisticRegression(penalty="l2", solver="liblinear", max_iter=1000).fit(train_all, train_labels)
+
+# Absolute values of coefficients are penalized
+# Drives some features exactly to 0, so automatic feature selection
+lasso_sig = LogisticRegression(penalty="l1", solver="saga", max_iter=5000).fit(train_sig, train_labels)
+lasso_all = LogisticRegression(penalty="l1", solver="saga", max_iter=5000).fit(train_all, train_labels)
+
+
 num_sig = ["CreditScore","YearsEmployed","Income","Debt","Age"]
 bin_sig = ["PriorDefault","Employed","DriversLicense"]  # just pass these through
 
+
+# numeric features: cubic spline basis expansion
+# binary features are passed through as is and other features are dropped
+# n_knots splits the numeric range into intervals so the curve can bend
+# extrapolation outside the knots, so it continues linearly
+# include_bias = False, doesnt add an extra intercept column
 ct_sig = ColumnTransformer(
     transformers=[
         ("spline", SplineTransformer(degree=3, n_knots=5, extrapolation="linear", include_bias=False), num_sig),
@@ -167,26 +213,22 @@ spl_log_sig = make_pipeline(ct_sig, LogisticRegression(solver="liblinear", max_i
     train_features_scaled[sig_vars], train_labels
 )
 
-# All: splines on 5 numerics,
+
+
 all_other_cols = [c for c in train_features_scaled.columns if c not in numCols]
+
 ct_all = ColumnTransformer(
     transformers=[
         ("spline", SplineTransformer(degree=3, n_knots=5, extrapolation="linear", include_bias=False), numCols),
-        ("passthrough", "passthrough", [c for c in all_other_cols if c != "Approved"]),
+        ("passthrough", "passthrough", [c for c in all_other_cols if c != "Approved"]), # keep other features (categorical, binary)
     ],
     remainder="drop"
 )
-# Fit on full train_features_scaled (all features)
+
 spl_log_all = make_pipeline(ct_all, LogisticRegression(solver="liblinear", max_iter=1000)).fit(
     train_features_scaled, train_labels
 )
 
-# Ridge / Lasso (logistic);
-ridge_sig = LogisticRegression(penalty="l2", solver="liblinear", max_iter=1000).fit(train_sig, train_labels)
-ridge_all = LogisticRegression(penalty="l2", solver="liblinear", max_iter=1000).fit(train_all, train_labels)
-
-lasso_sig = LogisticRegression(penalty="l1", solver="saga", max_iter=5000).fit(train_sig, train_labels)
-lasso_all = LogisticRegression(penalty="l1", solver="saga", max_iter=5000).fit(train_all, train_labels)
 
 # PRINTOUTS
 print("\n=== MODEL ACCURACIES ===")

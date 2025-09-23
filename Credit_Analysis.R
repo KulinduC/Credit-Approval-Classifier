@@ -85,7 +85,8 @@ data <- dplyr::select(data, -Ethnicity)
 
 
 # split first
-train_idx <- createDataPartition(factor(data$Approved, levels = c(0,1)), p = 0.8, list = FALSE)
+
+train_idx <- createDataPartition(data$Approved, p = 0.8, list = FALSE)
 train_data <- data[train_idx, ]
 test_data  <- data[-train_idx, ]
 
@@ -99,17 +100,17 @@ test_data[,  num_cols] <- scale(test_data[, num_cols],
                                 scale  = attr(scaler, "scaled:scale"))
 
 # targets
-train_y <- factor(train_data$Approved, levels = c(0,1))
-test_y  <- factor(test_data$Approved,  levels = c(0,1))
+train_Approved <- factor(train_data$Approved, levels = c(0,1))
+test_Approved  <- factor(test_data$Approved,  levels = c(0,1))
 
 
-confMat <- function(fit, newdata = test_data, truth = test_y, thr = 0.5) {
+confMat <- function(fit, newdata = test_data, truth = test_Approved, thr = 0.5) {
   probs <- predict(fit, newdata, type = "response")
   pred  <- factor(as.integer(probs > thr), levels = c(0,1))
   as.numeric(caret::confusionMatrix(pred, truth)$overall["Accuracy"]) * 100
 }
 
-confMatLabel <- function(fit, newdata = test_data, truth = test_y) {
+confMatLabel <- function(fit, newdata = test_data, truth = test_Approved) {
   p <- predict(fit, newdata)
   pred <- factor(as.character(p), levels = c(0,1))
   as.numeric(caret::confusionMatrix(pred, truth)$overall["Accuracy"]) * 100
@@ -169,7 +170,7 @@ confMatLabel(fit.rf.all)
 
 # LINEAR REGRESSION
 fit.lm.sig <- lm(significant, data = train_data)
-confMat(fit.lm.sig)  # uses test_data & test_y by default
+confMat(fit.lm.sig)  # uses test_data & test_Approved by default
 
 fit.lm.all <- lm(Approved ~ ., data = train_data)
 confMat(fit.lm.all)
@@ -281,30 +282,30 @@ confMat(fit.spline.all)
 
 # RIDGE
 # Convert factor to numeric for comparison
-test_y_num <- as.numeric(test_y) - 1  # Convert factor levels (1,2) to (0,1)
-train_y_num <- as.numeric(train_y) - 1
+test_Approved_num <- as.numeric(test_Approved) - 1  # Convert factor levels (1,2) to (0,1)
+train_Approved_num <- as.numeric(train_Approved) - 1
 
 
 #Significant features
-fit.ridge.sig  <- cv.glmnet(train_sig, train_y_num, alpha = 0, family = "binomial")
+fit.ridge.sig  <- cv.glmnet(train_sig, train_Approved_num, alpha = 0, family = "binomial")
 pred.ridge.sig <- as.numeric(predict(fit.ridge.sig, test_sig, s = "lambda.min", type = "response"))
-mean((pred.ridge.sig > 0.5) == test_y_num) * 100
+mean((pred.ridge.sig > 0.5) == test_Approved_num) * 100
 
 # All features
-fit.ridge.all  <- cv.glmnet(train_all, train_y_num, alpha = 0, family = "binomial")
+fit.ridge.all  <- cv.glmnet(train_all, train_Approved_num, alpha = 0, family = "binomial")
 pred.ridge.all <- as.numeric(predict(fit.ridge.all, test_all, s = "lambda.min", type = "response"))
-mean((pred.ridge.all > 0.5) == test_y_num) * 100
+mean((pred.ridge.all > 0.5) == test_Approved_num) * 100
 
 # LASSO
 # Significant features
-fit.lasso.sig  <- cv.glmnet(train_sig, train_y_num, alpha = 1, family = "binomial")
+fit.lasso.sig  <- cv.glmnet(train_sig, train_Approved_num, alpha = 1, family = "binomial")
 pred.lasso.sig <- as.numeric(predict(fit.lasso.sig, test_sig, s = "lambda.min", type = "response"))
-mean((pred.lasso.sig > 0.5) == test_y_num) * 100
+mean((pred.lasso.sig > 0.5) == test_Approved_num) * 100
 
 # All features
-fit.lasso.all  <- cv.glmnet(train_all, train_y_num, alpha = 1, family = "binomial")a
+fit.lasso.all  <- cv.glmnet(train_all, train_Approved_num, alpha = 1, family = "binomial")
 pred.lasso.all <- as.numeric(predict(fit.lasso.all, test_all, s = "lambda.min", type = "response"))
-mean((pred.lasso.all > 0.5) == test_y_num) * 100
+mean((pred.lasso.all > 0.5) == test_Approved_num) * 100
 
 
 # SUMMARY
@@ -357,10 +358,10 @@ pr("QDA (significant-nonzero)",
 
 # Ridge / Lasso (glmnet)
 pr("Ridge (significant)",
-   mean((as.numeric(predict(fit.ridge.sig, test_sig,  s="lambda.min", type="response")) > 0.5) == (as.numeric(test_y)-1)) * 100)
+   mean((as.numeric(predict(fit.ridge.sig, test_sig,  s="lambda.min", type="response")) > 0.5) == (as.numeric(test_Approved)-1)) * 100)
 pr("Ridge (all)",
-   mean((as.numeric(predict(fit.ridge.all, test_all, s="lambda.min", type="response")) > 0.5) == (as.numeric(test_y)-1)) * 100)
+   mean((as.numeric(predict(fit.ridge.all, test_all, s="lambda.min", type="response")) > 0.5) == (as.numeric(test_Approved)-1)) * 100)
 pr("Lasso (significant)",
-   mean((as.numeric(predict(fit.lasso.sig, test_sig,  s="lambda.min", type="response")) > 0.5) == (as.numeric(test_y)-1)) * 100)
+   mean((as.numeric(predict(fit.lasso.sig, test_sig,  s="lambda.min", type="response")) > 0.5) == (as.numeric(test_Approved)-1)) * 100)
 pr("Lasso (all)",
-   mean((as.numeric(predict(fit.lasso.all, test_all, s="lambda.min", type="response")) > 0.5) == (as.numeric(test_y)-1)) * 100)
+   mean((as.numeric(predict(fit.lasso.all, test_all, s="lambda.min", type="response")) > 0.5) == (as.numeric(test_Approved)-1)) * 100)
